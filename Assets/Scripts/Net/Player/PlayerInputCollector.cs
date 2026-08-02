@@ -1,5 +1,7 @@
 using Fusion;
+using Fusion.Sockets;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace Dropshock.Net.Player
 {
@@ -14,7 +16,10 @@ namespace Dropshock.Net.Player
     public sealed class PlayerInputCollector : MonoBehaviour, INetworkRunnerCallbacks
     {
         [Header("Look")]
-        [SerializeField] private float _mouseSensitivity = 0.12f;
+        [Tooltip("Degrees of rotation per pixel of mouse movement. Input System " +
+                 "reports raw pixels, so this is a much smaller number than the " +
+                 "equivalent legacy-axis sensitivity would be.")]
+        [SerializeField] private float _mouseSensitivity = 0.05f;
         [SerializeField] private float _minPitch = -89f;
         [SerializeField] private float _maxPitch = 89f;
         [SerializeField] private bool _invertPitch = false;
@@ -45,14 +50,16 @@ namespace Dropshock.Net.Player
 
         private void AccumulateLook()
         {
-            // Using legacy Input axes for raw mouse delta keeps this readable while
-            // the Input System actions asset is still the HDRP template default.
-            // TODO: migrate to the project's InputSystem_Actions asset.
-            float dx = Input.GetAxisRaw("Mouse X") * _mouseSensitivity;
-            float dy = Input.GetAxisRaw("Mouse Y") * _mouseSensitivity;
+            var mouse = Mouse.current;
+            if (mouse == null) return;
 
-            _lookAngles.y += dx;
-            _lookAngles.x += _invertPitch ? dy : -dy;
+            // Input System reports raw pixel delta, already accumulated for the
+            // frame. Unlike the legacy axes it carries no built-in smoothing or
+            // scaling, which is what we want — smoothing on aim is a feel killer.
+            Vector2 delta = mouse.delta.ReadValue();
+
+            _lookAngles.y += delta.x * _mouseSensitivity;
+            _lookAngles.x += (_invertPitch ? delta.y : -delta.y) * _mouseSensitivity;
             _lookAngles.x = Mathf.Clamp(_lookAngles.x, _minPitch, _maxPitch);
 
             // Keep yaw bounded so it stays precise after a long session.
@@ -67,25 +74,32 @@ namespace Dropshock.Net.Player
         {
             var data = new NetInput();
 
-            if (_inputEnabled)
+            var keyboard = Keyboard.current;
+            var mouse = Mouse.current;
+
+            if (_inputEnabled && keyboard != null)
             {
                 var move = new Vector2(
-                    Input.GetAxisRaw("Horizontal"),
-                    Input.GetAxisRaw("Vertical"));
+                    (keyboard.dKey.isPressed ? 1f : 0f) - (keyboard.aKey.isPressed ? 1f : 0f),
+                    (keyboard.wKey.isPressed ? 1f : 0f) - (keyboard.sKey.isPressed ? 1f : 0f));
 
                 // Clamp rather than normalise so analogue sticks keep their
                 // magnitude while keyboard diagonals do not exceed unit speed.
                 data.Move = Vector2.ClampMagnitude(move, 1f);
                 data.LookAngles = _lookAngles;
 
-                data.Buttons.Set(InputButton.Fire, Input.GetMouseButton(0));
-                data.Buttons.Set(InputButton.Aim, Input.GetMouseButton(1));
-                data.Buttons.Set(InputButton.Jump, Input.GetKey(KeyCode.Space));
-                data.Buttons.Set(InputButton.Sprint, Input.GetKey(KeyCode.LeftShift));
-                data.Buttons.Set(InputButton.Crouch, Input.GetKey(KeyCode.LeftControl));
-                data.Buttons.Set(InputButton.Reload, Input.GetKey(KeyCode.R));
-                data.Buttons.Set(InputButton.Interact, Input.GetKey(KeyCode.E));
-                data.Buttons.Set(InputButton.Vision, Input.GetKey(KeyCode.V));
+                data.Buttons.Set(InputButton.Jump, keyboard.spaceKey.isPressed);
+                data.Buttons.Set(InputButton.Sprint, keyboard.leftShiftKey.isPressed);
+                data.Buttons.Set(InputButton.Crouch, keyboard.leftCtrlKey.isPressed);
+                data.Buttons.Set(InputButton.Reload, keyboard.rKey.isPressed);
+                data.Buttons.Set(InputButton.Interact, keyboard.eKey.isPressed);
+                data.Buttons.Set(InputButton.Vision, keyboard.vKey.isPressed);
+
+                if (mouse != null)
+                {
+                    data.Buttons.Set(InputButton.Fire, mouse.leftButton.isPressed);
+                    data.Buttons.Set(InputButton.Aim, mouse.rightButton.isPressed);
+                }
             }
 
             input.Set(data);
@@ -106,7 +120,7 @@ namespace Dropshock.Net.Player
         public void OnSessionListUpdated(NetworkRunner runner, System.Collections.Generic.List<SessionInfo> sessionList) { }
         public void OnCustomAuthenticationResponse(NetworkRunner runner, System.Collections.Generic.Dictionary<string, object> data) { }
         public void OnHostMigration(NetworkRunner runner, HostMigrationToken hostMigrationToken) { }
-        public void OnReliableDataReceived(NetworkRunner runner, PlayerRef player, ReliableKey key, System.ArraySegment<byte> data) { }
+        public void OnReliableDataReceived(NetworkRunner runner, PlayerRef player, ReliableKey key, System.ReadOnlySpan<byte> data) { }
         public void OnReliableDataProgress(NetworkRunner runner, PlayerRef player, ReliableKey key, float progress) { }
         public void OnSceneLoadDone(NetworkRunner runner) { }
         public void OnSceneLoadStart(NetworkRunner runner) { }
