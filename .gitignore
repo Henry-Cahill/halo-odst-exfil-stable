@@ -105,3 +105,30 @@ InitTestScene*.unity*
 
 # Auto-generated scenes by play mode tests
 /[Aa]ssets/[Ii]nit[Tt]est[Ss]cene*.unity*
+
+# --- Photon Fusion SDK ---------------------------------------------------
+# The SDK itself is a .unitypackage download from the Photon dashboard, not a
+# UPM package, so it is re-importable and does not belong in version control.
+#
+# The two config assets below ARE tracked (force-added), because they hold
+# settings whose failure modes are silent and expensive:
+#   NetworkProjectConfig.fusion  - LagCompensation.Enabled, and AssembliesToWeave,
+#                                  which must list Dropshock.Net or [Networked]
+#                                  weaving stops with no error at all.
+#
+# PhotonAppSettings.asset is deliberately NOT tracked: it holds a live Fusion App
+# Id, and CCU is the billed resource in a project with no permitted revenue. A
+# public repo would let anyone spend your quota. Each developer pastes their own
+# via Tools > Fusion > Realtime Settings (manual setup step 3).
+# See ARCHITECTURE.md, "The weaver allowlist" and "Hit registration".
+/[Aa]ssets/Photon/
+/[Aa]ssets/Photon.meta
+/[Aa]ssets/PhotonAddons/
+
+# --- Backend (.NET) ------------------------------------------------------
+# Backend/ is a plain .NET solution outside Assets/, so Unity's rules above do
+# not cover it. Without these, `git add Backend/` pulls in ~350 files of build
+# output, including the platform-specific Microsoft.Data.SqlClient natives at
+# ~2 MB each per project.
+/Backend/**/bin/
+/Backend/**/obj/
