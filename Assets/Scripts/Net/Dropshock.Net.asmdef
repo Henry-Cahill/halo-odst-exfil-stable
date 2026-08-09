@@ -1,0 +1,19 @@
+{
+    "name": "Dropshock.Net",
+    "rootNamespace": "Dropshock.Net",
+    "references": [
+        "Dropshock.Core",
+        "Fusion.Unity",
+        "Photon.Realtime",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

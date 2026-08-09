@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3b4ef941a9f509eafd4cccb7a3579c05, type: 3}
+  m_Name: ItemRegistry
+  m_EditorClassIdentifier: Assembly-CSharp::Dropshock.Core.Items.ItemRegistry
+  _items:
+  - {fileID: 11400000, guid: 3d42922d0417e9244b2e8d31d576d023, type: 2}
+  - {fileID: 11400000, guid: 30e57131a5498c54691e57628e8a4718, type: 2}
+  - {fileID: 11400000, guid: 7e7f51220c8b0904a81432bd198b7de5, type: 2}
+  - {fileID: 11400000, guid: c97780de50ed6e943b650938da9dd5bf, type: 2}
+  - {fileID: 11400000, guid: 29d269db202d4114e8fd25808f9e83e4, type: 2}
+  - {fileID: 11400000, guid: 6291c9647c67c7c4a9368bcd0eb625dd, type: 2}
