@@ -132,3 +132,8 @@ InitTestScene*.unity*
 # ~2 MB each per project.
 /Backend/**/bin/
 /Backend/**/obj/
+
+# Unity regenerates its own .csproj files, hence the *.csproj rule above. The
+# Backend ones are hand-written and are the build definition -- without them a
+# fresh clone has source files and no way to compile them.
+!/Backend/**/*.csproj
