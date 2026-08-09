@@ -40,12 +40,29 @@ namespace Dropshock.Net.Session
         private SessionConfig _config;
         private ChangeDetector _changes;
 
+        /// <summary>
+        /// Issues item instance ids for this session. Server-side only.
+        ///
+        /// <para>Lives here because exactly one <see cref="GameSession"/> exists per
+        /// session: a source owned per-player would restart at 1 for each of them and
+        /// hand different items identical ids, destroying the audit trail that makes
+        /// duplication detectable. Ids issued here are unique within this raid only —
+        /// items that survive to the stash must be reissued authoritative ids by the
+        /// backend at extraction. See ARCHITECTURE.md, "Stash and persistence".</para>
+        /// </summary>
+        public Core.Items.IInstanceIdSource InstanceIds { get; private set; }
+
         /// <summary>Raised on every peer when the replicated state changes.</summary>
         public event System.Action<SessionState> OnStateChanged;
 
         public override void Spawned()
         {
             _changes = GetChangeDetector(ChangeDetector.Source.SimulationState);
+
+            if (HasStateAuthority)
+            {
+                InstanceIds = new Core.Items.SessionInstanceIdSource();
+            }
         }
 
         /// <summary>Called by the launcher on the server immediately after spawn.</summary>

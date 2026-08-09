@@ -137,17 +137,46 @@ namespace Dropshock.Net.Player
             Debug.Log($"[{nameof(PlayerSpawner)}] Spawned player {player} at {position}.");
         }
 
-        public void PlayerLeft(PlayerRef player)
-        {
-            if (!Runner.IsServer) return;
+        /// <summary>
+        /// Fusion's <see cref="IPlayerLeft"/> callback. Unreliable here by design of
+        /// the engine — see the class remarks — so it only forwards to
+        /// <see cref="HandlePlayerLeft"/>, which the launcher also calls directly.
+        /// </summary>
+        public void PlayerLeft(PlayerRef player) => HandlePlayerLeft(player, Runner);
 
-            if (_spawned.Remove(player, out var obj) && obj != null)
+        /// <summary>
+        /// Despawns a departed player, dropping their carried loot into the world
+        /// first.
+        ///
+        /// <para>Public and runner-parameterised so <see cref="Session.NetworkLauncher"/>
+        /// can drive it directly: the launcher reliably receives runner callbacks,
+        /// whereas this scene-placed SimulationBehaviour may never be registered with
+        /// the simulation and would then never be told anyone had left.</para>
+        ///
+        /// <para>Idempotent — the launcher and the Fusion callback may both fire.</para>
+        /// </summary>
+        public void HandlePlayerLeft(PlayerRef player, NetworkRunner runner)
+        {
+            if (runner == null || !runner.IsServer) return;
+
+            if (!_spawned.Remove(player, out var obj) || obj == null) return;
+
+            // A disconnecting player must drop carried loot rather than vanish with
+            // it, or combat-logging becomes the optimal way to keep gear. This is the
+            // same path death uses, on purpose.
+            //
+            // A hard crash or timeout also arrives here, but only once Fusion's
+            // connection timeout expires, so the corpse appears late. That is correct
+            // — the alternative is trusting a client-sent disconnect notice, which is
+            // trivially withheld by the client that most wants to withhold it.
+            var inventory = obj.GetComponent<Items.PlayerInventory>();
+            if (inventory != null)
             {
-                // TODO (co-op extraction): a disconnecting player must drop their
-                // carried loot rather than vanish with it, or combat-logging becomes
-                // the optimal way to keep gear. This is a launch-blocking rule.
-                Runner.Despawn(obj);
+                inventory.DropAllToWorld(obj.transform.position);
             }
+
+            Debug.Log($"[{nameof(PlayerSpawner)}] Despawning {player} after leaving.", this);
+            runner.Despawn(obj);
         }
 
         private void GetSpawnPose(out Vector3 position, out Quaternion rotation)

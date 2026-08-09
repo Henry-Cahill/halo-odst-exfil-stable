@@ -18,3 +18,4 @@ MonoBehaviour:
   AreaOfInterestRadius: 250
   PersistLoadoutOnExtract: 1
   LobbyCountdownSeconds: 5
+  EnableDownedState: 1

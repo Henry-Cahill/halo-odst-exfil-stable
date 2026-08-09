@@ -39,6 +39,23 @@ namespace Dropshock.Net.Session
         [Tooltip("Seconds to wait in Lobby before the drop begins.")]
         public float LobbyCountdownSeconds = 15f;
 
+        [Header("Downed")]
+        [Tooltip("Do players enter a revivable downed state instead of dying " +
+                 "outright? Requires squadmates to be worth anything — in a solo " +
+                 "battle royale there is nobody to revive you, so going down is " +
+                 "just a slower death. Also the prerequisite for abduction entry " +
+                 "point 3 (downed and not revived).")]
+        public bool EnableDownedState = true;
+
+        [Header("Friendly fire")]
+        [Tooltip("Can squadmates damage each other? ON in co-op by design: the " +
+                 "squad has to watch its own fire, and it is what makes the downed " +
+                 "state reachable without an enemy present. Expressed here rather " +
+                 "than inferred from team ids, because the old team check silently " +
+                 "did nothing whenever teams were left Unassigned — which is every " +
+                 "test scene.")]
+        public bool EnableFriendlyFire = true;
+
         /// <summary>
         /// Sanity-check the config against its own mode. Misconfiguring AOI on a
         /// 100-player session is a silent performance cliff, so it is loud instead.

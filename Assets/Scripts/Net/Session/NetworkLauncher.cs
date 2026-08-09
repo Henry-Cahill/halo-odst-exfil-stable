@@ -30,11 +30,19 @@ namespace Dropshock.Net.Session
         [SerializeField] private int _gameplaySceneIndex = 1;
 
         [Header("Editor Convenience")]
-        [Tooltip("Auto-start in Host mode when entering play mode. Editor only.")]
+        [Tooltip("Auto-start in Host mode when entering play mode. Editor only. " +
+                 "Turn OFF to get the manual Host/Server/Client picker, which is " +
+                 "required for any test involving a real remote client.")]
         [SerializeField] private bool _autoStartHostInEditor = true;
+
+        [Tooltip("Session name used by the editor picker. Both peers must match.")]
+        [SerializeField] private string _devSessionName = "editor-test";
 
         private NetworkRunner _runner;
         private GameSession _session;
+
+        /// <summary>Guards against a second StartGame cancelling the first in flight.</summary>
+        private bool _starting;
 
         public SessionConfig Config => _sessionConfig;
         public bool IsRunning => _runner != null && _runner.IsRunning;
@@ -49,6 +57,16 @@ namespace Dropshock.Net.Session
                 Debug.LogError($"[{nameof(NetworkLauncher)}] No SessionConfig assigned. " +
                                "Cannot determine mode, player cap, or AOI settings.", this);
             }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // Attached in code rather than serialised into Bootstrap.unity: the type is
+            // compiled out of release builds, and a serialised reference to a
+            // compiled-out MonoBehaviour becomes a missing-script warning in the scene.
+            if (GetComponent<DeathTestHarness>() == null)
+            {
+                gameObject.AddComponent<DeathTestHarness>();
+            }
+#endif
         }
 
         private void Start()
@@ -56,10 +74,44 @@ namespace Dropshock.Net.Session
 #if UNITY_EDITOR
             if (_autoStartHostInEditor)
             {
-                _ = StartSession(Fusion.GameMode.Host, "editor-test");
+                _ = StartSession(Fusion.GameMode.Host, _devSessionName);
             }
 #endif
         }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>
+        /// Minimal dev picker, shown only while no session is running.
+        ///
+        /// <para>Exists because lag compensation cannot be tested from a Host. The host
+        /// player *is* the server, so their shots never traverse the network and the
+        /// network conditioner does not apply to them — hit registration would appear
+        /// to work even if rewind were completely broken. Verifying it requires a
+        /// genuine remote Client, which needs a way to choose that mode.</para>
+        /// </summary>
+        private void OnGUI()
+        {
+            if (IsRunning || _starting || _autoStartHostInEditor) return;
+
+            using (new GUILayout.AreaScope(new Rect(10, 10, 220, 130), "Dropshock dev start", GUI.skin.window))
+            {
+                if (GUILayout.Button("Server (authoritative, no local player)"))
+                {
+                    _ = StartServer(_devSessionName);
+                }
+
+                if (GUILayout.Button("Client (join — use this to test hit reg)"))
+                {
+                    _ = StartClient(_devSessionName);
+                }
+
+                if (GUILayout.Button("Host (server + local player)"))
+                {
+                    _ = StartSession(Fusion.GameMode.Host, _devSessionName);
+                }
+            }
+        }
+#endif
 
         /// <summary>Boot a dedicated authoritative server. This is the shipping path.</summary>
         public System.Threading.Tasks.Task StartServer(string sessionName)
@@ -77,33 +129,60 @@ namespace Dropshock.Net.Session
                 return;
             }
 
-            _sessionConfig.Validate();
-
-            var sceneManager = gameObject.GetComponent<NetworkSceneManagerDefault>()
-                               ?? gameObject.AddComponent<NetworkSceneManagerDefault>();
-
-            var args = new StartGameArgs
+            if (_starting)
             {
-                GameMode = mode,
-                SessionName = sessionName,
-                PlayerCount = _sessionConfig.MaxPlayers,
-                Scene = SceneRef.FromIndex(_gameplaySceneIndex),
-                SceneManager = sceneManager,
-            };
-
-            Debug.Log($"[{nameof(NetworkLauncher)}] Starting {mode} session '{sessionName}' " +
-                      $"({_sessionConfig.Mode}, max {_sessionConfig.MaxPlayers}).");
-
-            var result = await _runner.StartGame(args);
-
-            if (!result.Ok)
-            {
-                Debug.LogError($"[{nameof(NetworkLauncher)}] Failed to start session: " +
-                               $"{result.ShutdownReason} — {result.ErrorMessage}");
+                Debug.LogWarning($"[{nameof(NetworkLauncher)}] Start already in progress; ignoring.", this);
                 return;
             }
+            _starting = true;
 
-            Debug.Log($"[{nameof(NetworkLauncher)}] Session started.");
+            try
+            {
+                _sessionConfig.Validate();
+
+                var sceneManager = gameObject.GetComponent<NetworkSceneManagerDefault>()
+                                   ?? gameObject.AddComponent<NetworkSceneManagerDefault>();
+
+                // Fusion loads the gameplay scene in Single mode, which unloads
+                // Bootstrap — taking this GameObject, and the NetworkRunner running
+                // the start operation, with it. The in-flight StartGame is then
+                // cancelled and surfaces as ShutdownReason.OperationCanceled, which
+                // names the symptom and not the cause.
+                _runner.MakeDontDestroyOnLoad(gameObject);
+
+                var args = new StartGameArgs
+                {
+                    GameMode = mode,
+                    SessionName = sessionName,
+                    PlayerCount = _sessionConfig.MaxPlayers,
+                    SceneManager = sceneManager,
+                };
+
+                // Only the authority dictates the scene. A client receives it from the
+                // server; specifying one here makes it race the server's own load.
+                if (mode != Fusion.GameMode.Client)
+                {
+                    args.Scene = SceneRef.FromIndex(_gameplaySceneIndex);
+                }
+
+                Debug.Log($"[{nameof(NetworkLauncher)}] Starting {mode} session '{sessionName}' " +
+                          $"({_sessionConfig.Mode}, max {_sessionConfig.MaxPlayers}).");
+
+                var result = await _runner.StartGame(args);
+
+                if (!result.Ok)
+                {
+                    Debug.LogError($"[{nameof(NetworkLauncher)}] Failed to start session: " +
+                                   $"{result.ShutdownReason} — {result.ErrorMessage}");
+                    return;
+                }
+
+                Debug.Log($"[{nameof(NetworkLauncher)}] Session started.");
+            }
+            finally
+            {
+                _starting = false;
+            }
         }
 
         public void OnSceneLoadDone(NetworkRunner runner)
@@ -166,6 +245,36 @@ namespace Dropshock.Net.Session
         {
             if (!runner.IsServer) return;
             _session?.HandlePlayerLeft(player);
+
+            // Drive the despawn directly, for the same reason joining is driven
+            // directly: PlayerSpawner is a scene-placed SimulationBehaviour and its
+            // IPlayerLeft callback may never be registered with the simulation, in
+            // which case it silently never fires.
+            //
+            // This path is load-bearing — it is where a disconnecting player's loot
+            // is dropped. If it does not run, combat-logging becomes the optimal way
+            // to keep gear.
+            DriveSpawnerLeft(runner, player);
+        }
+
+        /// <summary>
+        /// Tells the gameplay scene's spawner that a player has gone, so their object
+        /// is despawned and their carried loot reaches the world first.
+        /// </summary>
+        private void DriveSpawnerLeft(NetworkRunner runner, PlayerRef player)
+        {
+            if (!runner.IsServer) return;
+
+            var spawner = FindFirstObjectByType<PlayerSpawner>();
+            if (spawner == null)
+            {
+                Debug.LogError($"[{nameof(NetworkLauncher)}] Player {player} left but no " +
+                               "PlayerSpawner was found: their object will not be despawned " +
+                               "and their loot will not drop.");
+                return;
+            }
+
+            spawner.HandlePlayerLeft(player, runner);
         }
 
         public void OnShutdown(NetworkRunner runner, ShutdownReason shutdownReason)

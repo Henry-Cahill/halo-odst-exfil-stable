@@ -39,6 +39,9 @@ namespace Dropshock.EditorTools
             errors += ValidateScenes();
             errors += ValidateSessionConfigs(ref warnings);
             errors += ValidateLauncherWiring();
+            errors += ValidateLagCompensation();
+            errors += ValidateEnemySetup();
+            errors += ValidateWeaverAllowlist();
 
             if (errors == 0 && warnings == 0)
             {
@@ -120,6 +123,19 @@ namespace Dropshock.EditorTools
                                      "shots will originate from the player root, not the eye.", prefab);
                     warnings++;
                 }
+
+                // A hit mask that omits the Hitbox layer produces the same symptom as
+                // having no hitboxes at all: the raycast returns false on every shot,
+                // with no error. Silent, and easy to cause from the Inspector.
+                int hitboxLayer = LayerMask.NameToLayer("Hitbox");
+                var maskProp = so.FindProperty("_hitMask");
+                if (hitboxLayer >= 0 && maskProp != null &&
+                    (maskProp.intValue & (1 << hitboxLayer)) == 0)
+                {
+                    Debug.LogError("[Validate] NetworkWeapon._hitMask does not include the " +
+                                   "'Hitbox' layer. Every shot will miss silently.", prefab);
+                    errors++;
+                }
             }
 
             if (prefab.GetComponent<PlayerHealth>() == null)
@@ -128,7 +144,80 @@ namespace Dropshock.EditorTools
                 errors++;
             }
 
+            // Inventory wiring. Both of these fail silently and destructively: a
+            // missing registry means the player can hold nothing, and a missing
+            // corpse prefab means gear is refused a route into the world on death,
+            // which is the combat-log dupe this system exists to close.
+            var inventory = prefab.GetComponent<Dropshock.Net.Items.PlayerInventory>();
+            if (inventory == null)
+            {
+                Debug.LogWarning("[Validate] Player prefab has no PlayerInventory; " +
+                                 "the player cannot carry or drop anything.", prefab);
+                warnings++;
+            }
+            else
+            {
+                var invSo = new SerializedObject(inventory);
+
+                if (invSo.FindProperty("_registry")?.objectReferenceValue == null)
+                {
+                    Debug.LogError("[Validate] PlayerInventory has no ItemRegistry — every item " +
+                                   "id will fail to resolve and the player can hold nothing.", prefab);
+                    errors++;
+                }
+
+                if (invSo.FindProperty("_corpseContainerPrefab")?.objectReferenceValue == null)
+                {
+                    Debug.LogError("[Validate] PlayerInventory has no corpse container prefab. " +
+                                   "Death and disconnect cannot drop gear, which is exactly the " +
+                                   "combat-logging exploit the drop path exists to prevent.", prefab);
+                    errors++;
+                }
+            }
+
             return errors;
+        }
+
+        /// <summary>
+        /// The master switch behind every other hitbox check. A correct prefab rig and
+        /// correct C# still produce zero hits when this is off: Fusion records no hitbox
+        /// snapshot history, so <c>Runner.LagCompensation.Raycast</c> has nothing to
+        /// rewind and returns false forever, with no error from anywhere.
+        /// </summary>
+        private static int ValidateLagCompensation()
+        {
+            NetworkProjectConfig config = null;
+            try
+            {
+                // Global loads the asset on demand; IsGlobalLoaded alone would make this
+                // check skip itself in a fresh editor session, which is exactly when it
+                // matters most.
+                config = NetworkProjectConfigAsset.Global?.Config;
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("[Validate] Could not load NetworkProjectConfig to verify lag " +
+                                 $"compensation: {e.Message}");
+                return 0;
+            }
+
+            if (config == null)
+            {
+                Debug.LogWarning("[Validate] NetworkProjectConfig is unavailable — could not verify " +
+                                 "that lag compensation is enabled.");
+                return 0;
+            }
+
+            if (!config.LagCompensation.Enabled)
+            {
+                Debug.LogError("[Validate] LagCompensation is DISABLED in NetworkProjectConfig. " +
+                               "No hitbox history is recorded, so every server-side shot misses " +
+                               "regardless of how the hitboxes are set up. Enable it under " +
+                               "Fusion ▸ Network Project Config ▸ Lag Compensation.");
+                return 1;
+            }
+
+            return 0;
         }
 
         private static int ValidateScenes()
@@ -236,6 +325,117 @@ namespace Dropshock.EditorTools
             }
 
             return errors;
+        }
+
+        /// <summary>
+        /// The AI pipeline, whose every failure mode is "no enemies appear".
+        ///
+        /// <para><c>EnemySpawner</c> opens with <c>if (_enemyPrefab == null) return;</c>
+        /// — an unassigned prefab is a silent, permanent no-op with no log line of any
+        /// kind. Same shape as the lag-compensation flag, same treatment.</para>
+        /// </summary>
+        private static int ValidateEnemySetup()
+        {
+            int errors = 0;
+
+            var enemy = AssetDatabase.LoadAssetAtPath<GameObject>(EnemyPrefabBuilder.PrefabPath);
+            if (enemy == null)
+            {
+                Debug.LogError($"[Validate] No enemy prefab at {EnemyPrefabBuilder.PrefabPath}. " +
+                               "No AI can spawn. Run Dropshock ▸ Setup ▸ Build Test Scene.");
+                return 1;
+            }
+
+            if (!enemy.TryGetComponent<NetworkObject>(out _))
+            {
+                Debug.LogError("[Validate] Enemy prefab has no NetworkObject; it cannot be spawned.", enemy);
+                errors++;
+            }
+
+            // Lag compensation rewinds Fusion Hitboxes, not PhysX colliders. An enemy
+            // without a populated HitboxRoot is unshootable, and fails silently.
+            if (!enemy.TryGetComponent(out HitboxRoot enemyRoot))
+            {
+                Debug.LogError("[Validate] Enemy prefab has no HitboxRoot; lag-compensated fire " +
+                               "cannot hit it. Every shot will miss silently.", enemy);
+                errors++;
+            }
+            else if (enemyRoot.Hitboxes == null || enemyRoot.Hitboxes.Length == 0)
+            {
+                Debug.LogError("[Validate] Enemy prefab HitboxRoot.Hitboxes is empty. Assigning " +
+                               "Hitbox.Root is not enough — the root's own array must list them.", enemy);
+                errors++;
+            }
+
+            // The spawner must actually point at the prefab. It lives on the
+            // GameSession prefab rather than in a scene — deliberately, because a
+            // scene-placed NetworkBehaviour may never be registered with the
+            // simulation — so this checks the prefab, not the loaded scenes.
+            var session = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Prefabs/GameSession.prefab");
+            if (session == null)
+            {
+                Debug.LogWarning("[Validate] No GameSession prefab; cannot check EnemySpawner wiring.");
+                return errors;
+            }
+
+            var spawners = session.GetComponentsInChildren<Dropshock.Net.AI.EnemySpawner>(true);
+            if (spawners.Length == 0)
+            {
+                Debug.LogError("[Validate] GameSession prefab has no EnemySpawner; no AI will spawn.",
+                               session);
+                errors++;
+            }
+
+            foreach (var spawner in spawners)
+            {
+                var prop = new SerializedObject(spawner).FindProperty("_enemyPrefab");
+
+                if (prop != null && prop.objectReferenceValue == null)
+                {
+                    Debug.LogError("[Validate] EnemySpawner has no enemy prefab assigned. It returns " +
+                                   "immediately every tick and no AI will ever spawn — with no error " +
+                                   "at runtime.", session);
+                    errors++;
+                }
+            }
+
+            return errors;
+        }
+
+        /// <summary>
+        /// Fusion weaves only the assemblies named in <c>AssembliesToWeave</c>, by
+        /// exact string match with no wildcards.
+        ///
+        /// <para>An assembly holding <c>NetworkBehaviour</c>s but missing from that
+        /// list is not woven, and every <c>[Networked]</c> property in it silently
+        /// stops replicating. No error, no warning — state just does not sync. This
+        /// check exists because the Core/Net asmdef split put that failure one typo
+        /// away.</para>
+        /// </summary>
+        private static int ValidateWeaverAllowlist()
+        {
+            const string configPath = "Assets/Photon/Fusion/Resources/NetworkProjectConfig.fusion";
+            const string requiredAssembly = "Dropshock.Net";
+
+            if (!System.IO.File.Exists(configPath))
+            {
+                Debug.LogWarning($"[Validate] No {configPath}; cannot check the weaver allowlist.");
+                return 0;
+            }
+
+            // Deliberately a substring test rather than a JSON parse: this check must
+            // not itself become something that fails quietly on a schema change.
+            if (System.IO.File.ReadAllText(configPath).Contains($"\"{requiredAssembly}\""))
+            {
+                return 0;
+            }
+
+            Debug.LogError(
+                $"[Validate] '{requiredAssembly}' is missing from AssembliesToWeave in {configPath}. " +
+                "Fusion will not weave it, so every [Networked] property in that assembly stops " +
+                "replicating — with no error at runtime. Add it to the array.");
+
+            return 1;
         }
     }
 }

@@ -1,3 +1,4 @@
+using Dropshock.Core.Items;
 using Dropshock.Net.Player;
 using Dropshock.Net.Weapons;
 using Fusion;
@@ -23,7 +24,9 @@ namespace Dropshock.EditorTools
         private const float CapsuleRadius = 0.35f;
         private const float EyeHeight = 1.65f;
 
-        public static GameObject Build(WeaponConfig weaponConfig, int hitboxLayer)
+        public static GameObject Build(WeaponConfig weaponConfig, int hitboxLayer,
+                                      ItemRegistry itemRegistry = null,
+                                      GameObject corpseContainerPrefab = null)
         {
             SetupUtil.EnsureFolder("Assets", "Prefabs");
 
@@ -75,6 +78,27 @@ namespace Dropshock.EditorTools
                 int hitMask = (1 << hitboxLayer) | (1 << LayerMask.NameToLayer("Default"));
                 SetupUtil.SetLayerMask(weapon, "_hitMask", hitMask);
 
+                // --- Inventory ---------------------------------------------------
+                // Both references matter for different reasons: without the registry
+                // the player can hold nothing, and without the corpse prefab their
+                // gear cannot reach the world on death or disconnect.
+                var inventory = root.AddComponent<Dropshock.Net.Items.PlayerInventory>();
+                SetupUtil.SetObject(inventory, "_registry", itemRegistry);
+                SetupUtil.SetInt(inventory, "_width", 10);
+                SetupUtil.SetInt(inventory, "_height", 6);
+                SetupUtil.SetInt(inventory, "_maxStacks", 40);
+
+                if (corpseContainerPrefab != null &&
+                    corpseContainerPrefab.TryGetComponent(out NetworkObject corpseNetObj))
+                {
+                    SetupUtil.SetObject(inventory, "_corpseContainerPrefab", corpseNetObj);
+                }
+
+                // Test scaffolding: without a starting loadout there is nothing to
+                // drop, and a death drop that moves zero items looks identical to one
+                // that is broken.
+                AssignDebugLoadout(inventory, itemRegistry);
+
                 var prefab = PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
                 Debug.Log($"[Dropshock Setup] Built player prefab at {PrefabPath}");
                 return prefab;
@@ -83,6 +107,49 @@ namespace Dropshock.EditorTools
             {
                 Object.DestroyImmediate(root);
             }
+        }
+
+        /// <summary>
+        /// Fills the debug loadout with a spread of footprints — 1×1, 1×2, 2×2 and
+        /// 4×2 — so a death drop exercises real grid packing rather than a handful of
+        /// single cells that would fit anywhere.
+        /// </summary>
+        private static void AssignDebugLoadout(Component inventory, ItemRegistry registry)
+        {
+            if (registry == null) return;
+
+            (ushort id, int count)[] wanted =
+            {
+                (5, 1),   // MA5 Rifle, 4x2
+                (4, 1),   // M6 Sidearm, 2x2
+                (2, 3),   // MA5 Magazine, 1x2
+                (3, 2),   // Biofoam Canister, 1x2
+                (6, 12),  // Salvaged Circuitry, 1x1
+            };
+
+            var so = new SerializedObject(inventory);
+            SerializedProperty list = so.FindProperty("_debugLoadout");
+
+            if (list == null)
+            {
+                Debug.LogWarning("[Dropshock Setup] PlayerInventory has no _debugLoadout field.");
+                return;
+            }
+
+            list.arraySize = wanted.Length;
+
+            for (int i = 0; i < wanted.Length; i++)
+            {
+                SerializedProperty element = list.GetArrayElementAtIndex(i);
+
+                registry.TryGetDef(wanted[i].id, out ItemDef def);
+                element.FindPropertyRelative("Item").objectReferenceValue = def;
+                element.FindPropertyRelative("Count").intValue = wanted[i].count;
+            }
+
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            SetupUtil.SetBool(inventory, "_grantDebugLoadout", true);
         }
 
         private static void ConfigureKcc(SimpleKCC kcc)

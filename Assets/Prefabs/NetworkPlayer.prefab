@@ -69,6 +69,7 @@ GameObject:
   - component: {fileID: 6509002932081944052}
   - component: {fileID: 8389339121031100301}
   - component: {fileID: 2238286710089956407}
+  - component: {fileID: 3776220035057762530}
   m_Layer: 0
   m_Name: NetworkPlayer
   m_TagString: Untagged
@@ -119,6 +120,7 @@ MonoBehaviour:
   - {fileID: 6509002932081944052}
   - {fileID: 8389339121031100301}
   - {fileID: 2238286710089956407}
+  - {fileID: 3776220035057762530}
   ForceRemoteRenderTimeframe: 0
 --- !u!54 &1122349031619092228
 Rigidbody:
@@ -214,10 +216,11 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5a923c37b2a015f49924a05aa885faed, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Dropshock.Net.Player.NetworkPlayer
+  m_EditorClassIdentifier: Dropshock.Net::Dropshock.Net.Player.NetworkPlayer
   _walkSpeed: 4.5
   _sprintSpeed: 7
   _crouchSpeed: 2
+  _downedSpeed: 1
   _jumpImpulse: 6
   _groundAcceleration: 18
   _airAcceleration: 3
@@ -236,16 +239,25 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 1efc96788b8cae64bb0ad7c2261a39a8, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Dropshock.Net.Player.PlayerHealth
+  m_EditorClassIdentifier: Dropshock.Net::Dropshock.Net.Player.PlayerHealth
   _maxHealth: 100
   _maxShield: 45
   _shieldRegenPerSecond: 15
   _shieldRegenDelay: 6
+  _downedPool: 100
+  _bleedOutSeconds: 45
+  _reviveSeconds: 5
+  _reviveRange: 2.5
+  _reviveHealthFraction: 0.5
+  _allowSelfRevive: 0
   _Health: 0
   _Shield: 0
   _IsDead:
     RawValue: 0
   _Team: 0
+  _IsDowned:
+    RawValue: 0
+  _ReviveProgress: 0
 --- !u!114 &8389339121031100301
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -257,7 +269,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 0c48351de3916ab499e2352eac96160b, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Dropshock.Net.Player.PlayerCamera
+  m_EditorClassIdentifier: Dropshock.Net::Dropshock.Net.Player.PlayerCamera
   _eyeAnchor: {fileID: 4289715440987594543}
   _positionOffset: {x: 0, y: 0, z: 0}
 --- !u!114 &2238286710089956407
@@ -271,7 +283,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: be9b89857215bb049bcbf3352cda1142, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Dropshock.Net.Weapons.NetworkWeapon
+  m_EditorClassIdentifier: Dropshock.Net::Dropshock.Net.Weapons.NetworkWeapon
   _config: {fileID: 11400000, guid: e397f0c132a611546aeb842f09496345, type: 2}
   _muzzle: {fileID: 347048006125238848}
   _hitMask:
@@ -280,6 +292,36 @@ MonoBehaviour:
   _Ammo: 0
   _IsReloading:
     RawValue: 0
+--- !u!114 &3776220035057762530
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5468495303825032395}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b4575612c9057102c2ea97e7a21d4f76, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Dropshock.Net::Dropshock.Net.Items.PlayerInventory
+  _width: 10
+  _height: 6
+  _maxStacks: 40
+  _registry: {fileID: 11400000, guid: 53a8c30c0fe21c04c9079d55040bea15, type: 2}
+  _corpseContainerPrefab: {fileID: 2155263385814177757, guid: 08bab5482af5f274697791bb3582bf8d, type: 3}
+  _maxCorpseContainers: 4
+  _grantDebugLoadout: 1
+  _debugLoadout:
+  - Item: {fileID: 11400000, guid: 29d269db202d4114e8fd25808f9e83e4, type: 2}
+    Count: 1
+  - Item: {fileID: 11400000, guid: c97780de50ed6e943b650938da9dd5bf, type: 2}
+    Count: 1
+  - Item: {fileID: 11400000, guid: 30e57131a5498c54691e57628e8a4718, type: 2}
+    Count: 3
+  - Item: {fileID: 11400000, guid: 7e7f51220c8b0904a81432bd198b7de5, type: 2}
+    Count: 2
+  - Item: {fileID: 11400000, guid: 6291c9647c67c7c4a9368bcd0eb625dd, type: 2}
+    Count: 12
 --- !u!1 &8153907864959312761
 GameObject:
   m_ObjectHideFlags: 0

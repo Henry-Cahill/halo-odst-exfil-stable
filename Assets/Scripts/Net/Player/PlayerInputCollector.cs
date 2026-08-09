@@ -28,6 +28,18 @@ namespace Dropshock.Net.Player
         private Vector2 _lookAngles;
         private bool _inputEnabled = true;
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        [Header("Dev: lag-compensation test")]
+        [Tooltip("Auto-strafe left/right without needing window focus. Toggle at " +
+                 "runtime with F8. Only one window receives keyboard input, so a " +
+                 "human cannot drive a moving target and a shooter at the same time — " +
+                 "and a stationary target registers hits even when rewind is broken.")]
+        [SerializeField] private bool _autoStrafe;
+
+        [Tooltip("Seconds for a full left-right-left cycle.")]
+        [SerializeField] private float _autoStrafePeriod = 2f;
+#endif
+
         /// <summary>Current local look angles, so the local camera can read them without waiting for the server.</summary>
         public Vector2 LookAngles => _lookAngles;
 
@@ -45,6 +57,17 @@ namespace Dropshock.Net.Player
         private void Update()
         {
             if (!_inputEnabled) return;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            var kb = Keyboard.current;
+            if (kb != null && kb.f8Key.wasPressedThisFrame)
+            {
+                _autoStrafe = !_autoStrafe;
+                Debug.Log($"[{nameof(PlayerInputCollector)}] Auto-strafe {(_autoStrafe ? "ON" : "OFF")}. " +
+                          "Move focus to the shooting client now.");
+            }
+#endif
+
             AccumulateLook();
         }
 
@@ -101,6 +124,17 @@ namespace Dropshock.Net.Player
                     data.Buttons.Set(InputButton.Aim, mouse.rightButton.isPressed);
                 }
             }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // Overrides lateral movement only, and goes through the normal input
+            // path — the server simulates this exactly like a human strafe, so the
+            // lag-compensation rewind under test is the real one.
+            if (_autoStrafe && _autoStrafePeriod > 0.001f)
+            {
+                float phase = (float)(_runner != null ? _runner.SimulationTime : Time.timeAsDouble);
+                data.Move = new Vector2(Mathf.Sin(phase * 2f * Mathf.PI / _autoStrafePeriod), 0f);
+            }
+#endif
 
             input.Set(data);
         }

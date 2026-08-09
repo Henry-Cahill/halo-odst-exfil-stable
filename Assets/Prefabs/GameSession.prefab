@@ -11,6 +11,7 @@ GameObject:
   - component: {fileID: 2446147467717765776}
   - component: {fileID: 3827957874053741486}
   - component: {fileID: 58706212230997789}
+  - component: {fileID: 2279509585052006882}
   m_Layer: 0
   m_Name: GameSession
   m_TagString: Untagged
@@ -52,6 +53,7 @@ MonoBehaviour:
   NestedObjects: []
   NetworkedBehaviours:
   - {fileID: 58706212230997789}
+  - {fileID: 2279509585052006882}
   ForceRemoteRenderTimeframe: 0
 --- !u!114 &58706212230997789
 MonoBehaviour:
@@ -64,10 +66,27 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d42d3999272a73f48bc0b6c6281f00e3, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Dropshock.Net.Session.GameSession
+  m_EditorClassIdentifier: Dropshock.Net::Dropshock.Net.Session.GameSession
   _spawnerSettings:
     SpawnRadius: 20
   _State: 0
   _Mode: 0
   _AlivePlayerCount: 0
   _ConnectedPlayerCount: 0
+--- !u!114 &2279509585052006882
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1204870412539105165}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4951a491b61edbc21f3fcbc5efdd5d0f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Dropshock.Net::Dropshock.Net.AI.EnemySpawner
+  _enemyPrefab: {fileID: 1663435817826040734, guid: 0b7054cf4d325ef41be6b7b2770b4be3, type: 3}
+  _targetCount: 4
+  _respawnSeconds: 8
+  _spawnRadius: 18
+  _minPlayerDistance: 12

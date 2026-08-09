@@ -43,6 +43,8 @@ namespace Dropshock.EditorTools
                     "• Assets/Scenes/Bootstrap.unity\n" +
                     "• Assets/Scenes/DropTest.unity\n" +
                     "• Assets/Prefabs/NetworkPlayer.prefab\n" +
+                    "• Assets/Prefabs/CorpseContainer.prefab\n" +
+                    "• Assets/Prefabs/Enemy.prefab\n" +
                     "• Assets/Settings/Dropshock/*.asset\n\n" +
                     "Unsaved changes in the current scene will be lost.",
                     "Build", "Cancel"))
@@ -66,8 +68,15 @@ namespace Dropshock.EditorTools
 
             var weaponConfig = CreateWeaponConfig();
             CreateSessionConfig();
-            PlayerPrefabBuilder.Build(weaponConfig, hitboxLayer);
-            BuildGameSessionPrefab();
+
+            // Order matters: the registry is referenced by the corpse container, and
+            // the corpse container is referenced by the player prefab.
+            var itemRegistry = ItemAssetBuilder.Build();
+            var corpsePrefab = LootContainerPrefabBuilder.Build(itemRegistry);
+            var enemyPrefab = EnemyPrefabBuilder.Build(hitboxLayer, corpsePrefab);
+
+            PlayerPrefabBuilder.Build(weaponConfig, hitboxLayer, itemRegistry, corpsePrefab);
+            BuildGameSessionPrefab(enemyPrefab);
 
             // Flush everything to disk BEFORE touching scenes. Creating assets and
             // then calling EditorSceneManager.NewScene triggers an asset database
@@ -86,8 +95,8 @@ namespace Dropshock.EditorTools
 
             Debug.Log(
                 "[Dropshock Setup] Done.\n" +
-                "NEXT: verify the player prefab is registered in NetworkProjectConfig, " +
-                "then open Assets/Scenes/Bootstrap.unity and press Play.");
+                "NEXT: register NetworkPlayer, CorpseContainer and Enemy prefabs in " +
+                "NetworkProjectConfig, then open Assets/Scenes/Bootstrap.unity and press Play.");
 
             EditorSceneManager.OpenScene(BootstrapScenePath);
         }
@@ -238,7 +247,7 @@ namespace Dropshock.EditorTools
         /// without reloading the Bootstrap scene.
         /// </para>
         /// </summary>
-        private static GameSession BuildGameSessionPrefab()
+        private static GameSession BuildGameSessionPrefab(GameObject enemyPrefab = null)
         {
             const string path = GameSessionPrefabPath;
 
@@ -248,6 +257,27 @@ namespace Dropshock.EditorTools
             {
                 root.AddComponent<NetworkObject>();
                 root.AddComponent<GameSession>();
+
+                // The enemy spawner lives here rather than in the scene on purpose.
+                // It is a NetworkBehaviour and must tick to do anything; a
+                // scene-placed one may never be registered with the simulation, which
+                // is the same failure that already made PlayerSpawner's callbacks
+                // unreliable. This prefab is server-spawned and demonstrably ticks.
+                var enemies = root.AddComponent<Dropshock.Net.AI.EnemySpawner>();
+                SetupUtil.SetInt(enemies, "_targetCount", 4);
+                SetupUtil.SetFloat(enemies, "_respawnSeconds", 8f);
+                SetupUtil.SetFloat(enemies, "_spawnRadius", 18f);
+                SetupUtil.SetFloat(enemies, "_minPlayerDistance", 12f);
+
+                if (enemyPrefab != null && enemyPrefab.TryGetComponent(out NetworkObject enemyNetObj))
+                {
+                    SetupUtil.SetObject(enemies, "_enemyPrefab", enemyNetObj);
+                }
+                else
+                {
+                    Debug.LogWarning("[Dropshock Setup] No enemy prefab; the session will " +
+                                     "spawn no hostiles.");
+                }
 
                 var saved = PrefabUtility.SaveAsPrefabAsset(root, path);
                 Debug.Log($"[Dropshock Setup] Built GameSession prefab at {path}");
@@ -285,7 +315,11 @@ namespace Dropshock.EditorTools
             SetupUtil.SetObject(launcher, "_sessionConfig", sessionConfig);
             SetupUtil.SetObject(launcher, "_gameSessionPrefab", sessionPrefab);
             SetupUtil.SetInt(launcher, "_gameplaySceneIndex", 1);
-            SetupUtil.SetBool(launcher, "_autoStartHostInEditor", true);
+            // Default OFF so the generated scene is usable for multi-peer testing.
+            // Auto-host cannot exercise lag compensation: the host player is the
+            // server, so their shots never cross the network. Pick a mode from the
+            // in-play picker instead.
+            SetupUtil.SetBool(launcher, "_autoStartHostInEditor", false);
 
             // Verify the references actually took. A destroyed-object assignment
             // silently serialises as null, which then fails at runtime with

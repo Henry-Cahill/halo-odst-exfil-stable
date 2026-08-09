@@ -79,8 +79,9 @@ namespace Dropshock.Net.Weapons
             if (!GetInput(out NetInput input)) return;
             if (_config == null) return;
 
-            // A dead player does not shoot.
-            if (_ownerHealth != null && !_ownerHealth.IsAlive) return;
+            // A dead or downed player does not shoot. CanAct rather than IsAlive:
+            // a downed player is still alive and still a target, but must not fight.
+            if (_ownerHealth != null && !_ownerHealth.CanAct) return;
 
             ProcessReload(input);
 
@@ -163,16 +164,25 @@ namespace Dropshock.Net.Weapons
                 isAiming ? _config.AimSpreadDegrees : _config.HipSpreadDegrees);
 
             var lagCompensation = Runner != null ? Runner.LagCompensation : null;
-            if (lagCompensation == null)
+
+            // Runner.LagCompensation is non-null even when the feature is switched off
+            // in NetworkProjectConfig, so the null check alone is not enough: with
+            // Enabled == false no hitbox snapshot history is recorded and every
+            // authority-side raycast silently misses. Check both.
+            bool lagCompensationEnabled =
+                Runner != null && Runner.Config != null && Runner.Config.LagCompensation.Enabled;
+
+            if (lagCompensation == null || !lagCompensationEnabled)
             {
                 // Fail loudly once, not every tick the trigger is held.
                 if (!_warnedNoLagCompensation)
                 {
                     _warnedNoLagCompensation = true;
                     Debug.LogError(
-                        $"[{nameof(NetworkWeapon)}] Runner.LagCompensation is unavailable — " +
-                        "hit registration is disabled. Check that hitboxes are registered and " +
-                        "that lag compensation is enabled in NetworkProjectConfig.", this);
+                        $"[{nameof(NetworkWeapon)}] Lag compensation is unavailable — " +
+                        "hit registration is disabled and every shot will miss. Enable " +
+                        "LagCompensation in NetworkProjectConfig and verify hitboxes are " +
+                        "registered on the player prefab.", this);
                 }
                 return;
             }
@@ -188,7 +198,15 @@ namespace Dropshock.Net.Weapons
                 _hitMask,
                 HitOptions.IncludePhysX | HitOptions.SubtickAccuracy);
 
-            if (!hit) return;
+            if (!hit)
+            {
+                // Lag comp is on and the ray still found nothing. Usual causes, in
+                // order of likelihood: _hitMask excludes the Hitbox layer, the muzzle
+                // transform points the wrong way, or the target's hitboxes are not
+                // registered with its HitboxRoot.
+                TraceShot("MISS — raycast found nothing", origin.position, direction);
+                return;
+            }
 
             // Hitbox hits resolve through the hitbox root; PhysX hits resolve through
             // the collider's GameObject. Either can be null depending on what was hit.
@@ -203,7 +221,22 @@ namespace Dropshock.Net.Weapons
                 target = result.GameObject.GetComponentInParent<IDamageable>();
             }
 
-            if (target == null || !target.IsAlive) return;
+            if (target == null)
+            {
+                // Something was hit, but nothing on it implements IDamageable. Usually
+                // geometry, or a hitbox whose IDamageable sits outside its parent chain.
+                TraceShot(
+                    $"HIT '{(result.GameObject != null ? result.GameObject.name : "?")}' " +
+                    "but found no IDamageable on it",
+                    origin.position, direction);
+                return;
+            }
+
+            if (!target.IsAlive)
+            {
+                TraceShot("HIT a target that is already dead", origin.position, direction);
+                return;
+            }
 
             var damage = new DamageInfo(
                 amount: _config.Damage,
@@ -213,6 +246,22 @@ namespace Dropshock.Net.Weapons
                 instigatorPlayerId: Object.InputAuthority.PlayerId);
 
             target.ApplyDamage(damage);
+            TraceShot($"HIT '{target}' for {_config.Damage}", origin.position, direction);
+        }
+
+        /// <summary>
+        /// Per-shot authority-side tracing, compiled out unless DROPSHOCK_TRACE_SHOTS
+        /// is defined (Project Settings ▸ Player ▸ Scripting Define Symbols).
+        ///
+        /// <para>Hit registration fails silently by nature — every failure path is just
+        /// "no damage happened", and they are indistinguishable in a playtest. This
+        /// names which one fired. Off by default because it logs on every shot.</para>
+        /// </summary>
+        [System.Diagnostics.Conditional("DROPSHOCK_TRACE_SHOTS")]
+        private void TraceShot(string outcome, Vector3 origin, Vector3 direction)
+        {
+            Debug.Log($"[Shot] tick={Runner.Tick} player={Object.InputAuthority.PlayerId} {outcome}", this);
+            Debug.DrawRay(origin, direction * _config.Range, Color.red, 2f, false);
         }
 
         /// <summary>

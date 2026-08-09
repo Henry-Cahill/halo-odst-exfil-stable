@@ -29,6 +29,10 @@ namespace Dropshock.Net.Player
         [SerializeField] private float _walkSpeed = 4.5f;
         [SerializeField] private float _sprintSpeed = 7.0f;
         [SerializeField] private float _crouchSpeed = 2.0f;
+
+        [Tooltip("Crawl speed while downed. Slow enough that a downed player cannot " +
+                 "self-rescue by crawling out of a fight, fast enough to reach cover.")]
+        [SerializeField] private float _downedSpeed = 1.0f;
         [SerializeField] private float _jumpImpulse = 6.0f;
 
         [Tooltip("ODST troopers are heavy. Low values feel floaty, high feels sluggish.")]
@@ -50,6 +54,7 @@ namespace Dropshock.Net.Player
         [SerializeField] private Transform _head;
 
         private SimpleKCC _kcc;
+        private PlayerHealth _health;
         private SessionConfig _sessionConfig;
 
         /// <summary>
@@ -75,6 +80,7 @@ namespace Dropshock.Net.Player
         public override void Spawned()
         {
             _kcc = GetComponent<SimpleKCC>();
+            _health = GetComponent<PlayerHealth>();
 
             // SimpleKCC has no serialised gravity field — it is a runtime setting,
             // and it takes a scalar (downward acceleration), not a vector.
@@ -131,13 +137,18 @@ namespace Dropshock.Net.Player
 
         private void ApplyMovement(NetInput input)
         {
+            // Downed: crawl only. Evaluated before anything else so no sprint, crouch
+            // or jump path can be reached from this state.
+            bool downed = _health != null && _health.IsDowned;
+
             bool crouching = input.Buttons.IsSet(InputButton.Crouch);
             bool sprinting = input.Buttons.IsSet(InputButton.Sprint) && !crouching;
 
             // Sprinting backwards is a classic movement exploit; require forward intent.
             if (sprinting && input.Move.y <= 0.1f) sprinting = false;
 
-            float targetSpeed = crouching ? _crouchSpeed
+            float targetSpeed = downed    ? _downedSpeed
+                              : crouching ? _crouchSpeed
                               : sprinting ? _sprintSpeed
                               : _walkSpeed;
 
@@ -158,7 +169,8 @@ namespace Dropshock.Net.Player
             // Edge-detect the jump against networked previous buttons so it survives
             // resimulation and cannot be held to auto-bhop.
             float jumpImpulse = 0f;
-            if (input.Buttons.WasPressed(PreviousButtons, InputButton.Jump) && _kcc.IsGrounded)
+            if (!downed &&
+                input.Buttons.WasPressed(PreviousButtons, InputButton.Jump) && _kcc.IsGrounded)
             {
                 jumpImpulse = _jumpImpulse;
             }
