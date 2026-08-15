@@ -29,9 +29,10 @@ namespace Dropshock.Net.AI
         [Tooltip("Distance at which the enemy stops closing and starts firing.")]
         [SerializeField] private float _attackRange = 12f;
 
-        [Tooltip("Virtual metres added to a downed player's distance when choosing a " +
-                 "target. Large enough that any standing player wins, small enough " +
-                 "that a lone downed player is still finished off.")]
+        [Tooltip("Virtual metres added to a downed player's distance when RANKING " +
+                 "targets. Applies to preference only, never to whether the player is " +
+                 "visible, so a lone downed player is always still finished off. Set " +
+                 "it at or above sightRange to guarantee any standing player wins.")]
         [SerializeField] private float _downedTargetPenalty = 40f;
 
         [Header("Movement")]
@@ -55,9 +56,45 @@ namespace Dropshock.Net.AI
         private EnemyHealth _health;
         private Transform _target;
 
+        /// <summary>Who <see cref="_target"/> belongs to, kept so a switch can be reported.</summary>
+        private PlayerRef _targetPlayer = PlayerRef.None;
+
+        // Target switching is normally rare, but two near-equidistant candidates can
+        // flip it every tick. Logging each flip would flood; suppressing them would
+        // hide the thrash, which is itself the bug. So: report switches as they
+        // happen, and if they exceed a sane rate, say that instead.
+        private float _switchWindowStart;
+        private int _switchesInWindow;
+        private float _nextThrashWarning;
+
         public override void Spawned()
         {
             _health = GetComponent<EnemyHealth>();
+
+            // Ranking is linear, so a downed candidate beats a standing one exactly
+            // when raw + penalty < standing distance. The worst case a standing player
+            // can present is _sightRange, so penalty >= _sightRange is precisely the
+            // condition that makes "any standing player wins" a guarantee rather than
+            // a tendency. Below it the rule holds only at some ranges, which is the
+            // hardest kind of behaviour to diagnose from a playtest — it works until
+            // the geometry happens to be wrong.
+            if (_downedTargetPenalty < _sightRange)
+            {
+                Debug.LogWarning(
+                    $"[AI] '{name}': downedTargetPenalty ({_downedTargetPenalty}m) is less than " +
+                    $"sightRange ({_sightRange}m), so a nearby downed player can outrank a distant " +
+                    "standing one and enemies will sometimes ignore a live threat to finish off a " +
+                    $"body. Set the penalty to at least {_sightRange}m to make standing players " +
+                    "always win.", this);
+            }
+
+            if (_downedTargetPenalty <= 0f)
+            {
+                Debug.LogWarning(
+                    $"[AI] '{name}': downedTargetPenalty is {_downedTargetPenalty}, so downed " +
+                    "players are not deprioritised at all. Enemies will camp bodies over standing " +
+                    "threats and revives become impossible.", this);
+            }
         }
 
         public override void FixedUpdateNetwork()
@@ -95,8 +132,13 @@ namespace Dropshock.Net.AI
         /// </summary>
         private void AcquireTarget()
         {
-            _target = null;
-            float bestSqr = _sightRange * _sightRange;
+            Transform best = null;
+            PlayerRef bestPlayer = PlayerRef.None;
+            float bestScore = float.MaxValue;
+            float bestRawSqr = 0f;
+            bool bestDowned = false;
+
+            float sightRangeSqr = _sightRange * _sightRange;
 
             foreach (PlayerRef player in Runner.ActivePlayers)
             {
@@ -106,20 +148,126 @@ namespace Dropshock.Net.AI
                 // Never target the dead: it makes enemies look broken and wastes
                 // damage on something that cannot receive it.
                 var health = obj.GetComponent<PlayerHealth>();
-                if (health == null || !health.IsAlive) continue;
+                if (health == null || !health.IsAlive)
+                {
+                    TraceAi($"candidate {player}: skipped ({(health == null ? "no PlayerHealth" : "dead")})");
+                    continue;
+                }
 
-                float sqr = (obj.transform.position - transform.position).sqrMagnitude;
+                float rawSqr = (obj.transform.position - transform.position).sqrMagnitude;
 
-                // Downed players stay targetable but are heavily deprioritised, so a
-                // standing threat always wins. Ignoring them outright would make going
-                // down a safe place to sit; preferring them would delete revives.
-                if (health.IsDowned) sqr += _downedTargetPenalty * _downedTargetPenalty;
+                // Visibility is answered on RAW distance only. Being downed does not
+                // make a player harder to see, and folding the penalty into this test
+                // is what made a lone downed player unkillable: the penalty is larger
+                // than sight range by design, so any downed candidate failed the sight
+                // check outright instead of merely losing a ranking.
+                if (rawSqr > sightRangeSqr)
+                {
+                    TraceAi($"candidate {player}: raw={Mathf.Sqrt(rawSqr):F1}m out of sight range {_sightRange}m");
+                    continue;
+                }
 
-                if (sqr > bestSqr) continue;
+                // Preference is a separate question, and it is scored in LINEAR metres
+                // because that is what the field is documented in. Adding penalty² to
+                // a squared distance is not the same operation as adding penalty to a
+                // distance, and the difference is the whole bug.
+                bool downed = health.IsDowned;
+                float score = Mathf.Sqrt(rawSqr) + (downed ? _downedTargetPenalty : 0f);
 
-                bestSqr = sqr;
-                _target = obj.transform;
+                bool rejected = score >= bestScore;
+
+                // The distinction that matters when checking the penalty: a candidate
+                // that would have been in contention on raw distance and lost purely
+                // because it is downed. That is the penalty doing its job. It can no
+                // longer cost a lone downed player its life, because with nothing else
+                // in contention bestScore is still MaxValue and it wins regardless.
+                bool rejectedOnlyByPenalty = rejected && downed && Mathf.Sqrt(rawSqr) < bestScore;
+
+                TraceAi(
+                    $"candidate {player}: raw={Mathf.Sqrt(rawSqr):F1}m downed={downed} " +
+                    $"score={score:F1} -> " +
+                    (rejectedOnlyByPenalty ? "REJECTED BY DOWNED PENALTY ALONE"
+                                           : rejected ? "rejected" : "leading"));
+
+                if (rejected) continue;
+
+                bestScore = score;
+                bestRawSqr = rawSqr;
+                bestDowned = downed;
+                best = obj.transform;
+                bestPlayer = player;
             }
+
+            ReportTargetChange(bestPlayer, bestRawSqr, bestDowned);
+
+            _target = best;
+            _targetPlayer = bestPlayer;
+        }
+
+        /// <summary>
+        /// Logs acquisition, loss and switching of targets.
+        ///
+        /// <para>Unconditional, unlike <see cref="TraceAi"/>, because these are the
+        /// events that answer "is the AI reacting to the downed state at all?" and a
+        /// trace behind a define nobody has enabled answers nothing. They are
+        /// event-driven rather than per-tick, so the volume is low — except when the
+        /// choice oscillates, which is handled explicitly.</para>
+        /// </summary>
+        private void ReportTargetChange(PlayerRef newPlayer, float rawSqr, bool downed)
+        {
+            if (newPlayer == _targetPlayer) return;
+
+            float now = Time.unscaledTime;
+            if (now - _switchWindowStart > 1f)
+            {
+                _switchWindowStart = now;
+                _switchesInWindow = 0;
+            }
+            _switchesInWindow++;
+
+            // Oscillating between near-equidistant candidates. Report the condition
+            // once rather than every flip; the rate is the diagnosis, not the flips.
+            if (_switchesInWindow > 4)
+            {
+                if (now >= _nextThrashWarning)
+                {
+                    _nextThrashWarning = now + 5f;
+                    Debug.LogWarning(
+                        $"[AI] '{name}' is thrashing between targets " +
+                        $"({_switchesInWindow} switches in the last second). Candidates are likely " +
+                        "near-equidistant; targeting needs hysteresis.", this);
+                }
+                return;
+            }
+
+            if (newPlayer == PlayerRef.None)
+            {
+                Debug.Log($"[AI] '{name}' lost target (was {_targetPlayer})", this);
+                return;
+            }
+
+            string from = _targetPlayer == PlayerRef.None ? "none" : _targetPlayer.ToString();
+            Debug.Log(
+                $"[AI] '{name}' target {from} -> {newPlayer} " +
+                $"at {Mathf.Sqrt(rawSqr):F1}m downed={downed}", this);
+        }
+
+        /// <summary>
+        /// Per-tick, per-candidate targeting detail, compiled out unless
+        /// DROPSHOCK_TRACE_AI is defined (Project Settings ▸ Player ▸ Scripting Define
+        /// Symbols).
+        ///
+        /// <para>This runs once per player per tick, so it cannot be unconditional.
+        /// It exists because the downed penalty is otherwise unobservable: a penalty
+        /// that does nothing, a penalty applied to the wrong player, and correct
+        /// behaviour that merely looks wrong from outside all present identically —
+        /// as an enemy walking somewhere. Same rationale as DROPSHOCK_TRACE_DOWNED
+        /// and DROPSHOCK_TRACE_SPAWNER.</para>
+        /// </summary>
+        [System.Diagnostics.Conditional("DROPSHOCK_TRACE_AI")]
+        private void TraceAi(string message)
+        {
+            Debug.Log($"[AI] tick={Runner.Tick} '{name}' {message}", this);
         }
 
         private void FaceTarget(Vector3 flatDirection)

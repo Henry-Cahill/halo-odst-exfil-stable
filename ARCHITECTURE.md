@@ -1060,10 +1060,35 @@ still able to fight; both are wrong.
 | Movement | Crawl only, `_downedSpeed`. No jump, sprint or crouch |
 | Weapons | Blocked via `CanAct` |
 | Gear | Retained — that is what makes a revive worth attempting |
-| AI attention | Still targetable, but `_downedTargetPenalty` virtual metres are added to the distance, so any standing player wins |
+| AI attention | Still targetable, but `_downedTargetPenalty` virtual metres are added when **ranking** targets, so any standing player wins |
 
 That AI rule is deliberate in both directions. Ignoring downed players outright
 would make the floor a safe place to sit; preferring them would delete revives.
+
+**Visibility and preference are separate questions, and the penalty only answers the
+second.** `AcquireTarget` gates sight on raw distance and applies the penalty only
+when ranking the candidates that passed. This is not a refinement; the original
+folded both into one test and added the penalty in *squared* metres against a
+squared sight budget, which with the shipped `Enemy.prefab` values (`_sightRange:
+25`, `_downedTargetPenalty: 40`) meant `1600` against a budget of `625` — a downed
+player was not deprioritised but **excluded at every distance, including point
+blank**. "Small enough that a lone downed player is still finished off" had never
+once worked, and could not: the failure showed up as an enemy walking away, which is
+indistinguishable from ordinary target loss.
+
+Ranking is therefore linear, in the metres the field is actually documented in.
+Adding `penalty²` to a squared distance is not the same operation as adding
+`penalty` to a distance, and that unit mismatch was the whole defect.
+
+The invariant is now exact rather than approximate: a downed candidate outranks a
+standing one precisely when `raw + penalty < standingDistance`, and the largest
+distance a standing player can present is `_sightRange`. So **`penalty >=
+_sightRange` is the condition that makes "any standing player wins" a guarantee**,
+and `Spawned` warns below it. Swept over the full 0–25m range a lone downed player
+is now targeted at every distance and, across 200k randomised two-candidate cases, a
+standing player never lost. Note that the previous session's startup warning
+asserted the opposite condition — it flagged `penalty >= sightRange` as the fault,
+when that is the correct setting.
 
 **Revive is input-driven, not an RPC.** A squadmate holds `InputButton.Interact`
 within `_reviveRange`; the reviver's own `FixedUpdateNetwork` finds the nearest
@@ -1089,7 +1114,16 @@ button.
 
 **Self-revive is off by default** (`_allowSelfRevive`). It turns downed into a soft
 speed bump for solo players and removes the squad dependency the state exists to
-create. It is a field rather than a deletion because solo co-op may want it.
+create. It is a field rather than a deletion because solo co-op may want it — which
+means it has to actually work when set, so driving a revive is gated on
+`CanAct || (IsDowned && _allowSelfRevive)` rather than `CanAct` alone.
+
+**`Heal` refuses while downed.** In that state `Health` *is* the bleed-out pool, so a
+medkit would refill the timer without ever clearing `IsDowned` — an unbounded stall
+rather than a recovery — and would clamp to `_maxHealth` while writing to
+`_downedPool`, so the two silently disagree the moment they are tuned apart. Getting
+up is `CompleteRevive`'s job; allowing it here would be a third revive path that
+ignores `_allowSelfRevive` and the reviver range check together.
 
 Disconnecting while downed drops gear through the normal leave path, since gear is
 retained rather than escrowed — combat-logging while down is not a way to keep it.
@@ -2037,11 +2071,27 @@ an unexpected throw as a failure rather than dying before the summary prints.
   feedback looks exactly like a broken one".
 
   **Still unverified in the downed path:** crawl speed (`_downedSpeed`, no logging —
-  needs feel rather than a trace); the AI's 40m downed targeting penalty, which
-  needs enemies actually engaging a downed player; self-revive being refused
-  (`_allowSelfRevive: 0`); and the single line never yet executed — bleed-out
+  needs feel rather than a trace); and the single line never yet executed — bleed-out
   reaching zero and calling `Die`, which logs `killed by player -1`. The drain is
   proven and `Die` is proven, but the join between them has not run.
+
+  **The AI's downed targeting penalty is off that list too — it was broken, not
+  merely unconfirmed.** See "Visibility and preference are separate questions". The
+  session that was queued to confirm it would have found an enemy declining to
+  finish off a downed player and had no way to tell that from the penalty working as
+  intended, because both look like an enemy walking away.
+
+  **Self-revive is no longer on that list, because it was not being refused — it was
+  unreachable.** `FixedUpdateNetwork` gated the whole revive drive on `CanAct`, which
+  is `!IsDead && !IsDowned`, so a downed player never reached `DriveRevive` and the
+  `_allowSelfRevive` check inside it could not run. Setting the flag to `1` would
+  have changed nothing. This is the worst shape a flag can take: the refusal it
+  produced was indistinguishable from the refusal it was supposed to control, so a
+  playtest confirming "self-revive is off" would have confirmed the bug instead of
+  the feature — the same failure mode as the old team-id friendly-fire rule, which
+  was also off exactly where it was untested. The gate is now
+  `CanAct || (IsDowned && _allowSelfRevive)`, and the downed trace prints both the
+  flag and the resulting decision so the two causes can be told apart.
 - **Downed-path tracing exists**, behind `DROPSHOCK_TRACE_DOWNED` (Project Settings
   ▸ Player ▸ Scripting Define Symbols), matching the `DROPSHOCK_TRACE_SHOTS` pattern
   in `NetworkWeapon`. Both bleed-out and revive were reviewed line by line without

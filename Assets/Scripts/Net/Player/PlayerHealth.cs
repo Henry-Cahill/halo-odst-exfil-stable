@@ -197,14 +197,22 @@ namespace Dropshock.Net.Player
             // Only logged while Interact is actually held, or when input is missing
             // entirely. Tracing every tick regardless buries the interesting lines
             // under thousands of idle ones — which is what happened the first time.
+            // Self-revive, when enabled, is the one action a downed player may take,
+            // so it cannot sit behind CanAct. Gating the whole revive drive on CanAct
+            // made _allowSelfRevive unreachable: CanAct is false for precisely the
+            // players the flag exists to serve, so setting it did nothing and the
+            // refusal looked like the flag working. IsDead is already excluded above.
+            bool mayDriveRevive = CanAct || (IsDowned && _allowSelfRevive);
+
             if (interact || !haveInput)
             {
                 TraceDowned(
                     $"input={(haveInput ? "yes" : "NO INPUT")} interact={interact} " +
-                    $"canAct={CanAct} downed={IsDowned}");
+                    $"canAct={CanAct} downed={IsDowned} " +
+                    $"selfRevive={_allowSelfRevive} mayDrive={mayDriveRevive}");
             }
 
-            if (CanAct && interact)
+            if (mayDriveRevive && interact)
             {
                 DriveRevive();
             }
@@ -472,6 +480,16 @@ namespace Dropshock.Net.Player
         public void Heal(float amount)
         {
             if (!HasStateAuthority || IsDead || amount <= 0f) return;
+
+            // Not while downed. Health *is* the bleed-out pool in that state, so a
+            // medkit would top the timer back up without ever clearing IsDowned — an
+            // unbounded stall rather than a recovery — and would clamp to _maxHealth
+            // instead of _downedPool, silently disagreeing with the pool it is
+            // actually writing to. Standing up is CompleteRevive's job, and routing
+            // it through here would be a second self-revive path that ignores
+            // _allowSelfRevive entirely.
+            if (IsDowned) return;
+
             Health = Mathf.Min(_maxHealth, Health + amount);
         }
 

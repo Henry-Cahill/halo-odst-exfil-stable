@@ -137,14 +137,35 @@ timers whose failure mode is silence.
 - Bleed-out actually reaching zero and calling `Die` — the one line never executed.
   Expect `killed by player -1`. Drain is proven and `Die` is proven; the join is not.
 - Crawl speed (`_downedSpeed = 1.0`) — needs feel, not a trace.
-- Self-revive being refused (`_allowSelfRevive: 0`).
-- The AI's 40m downed targeting penalty — **unblocked, needs one session to confirm.**
-  `EnemySpawner` now logs. On a server run expect `[Spawner] active on '...'` once at
-  startup, then `[Spawner] spawned '<prefab>' #1 ... alive=1/4` per spawn. If neither
-  line appears the component is not running at all; if the startup line appears alone,
-  read the warning it prints (`targetCount=0`, prefab missing, or radii overlapping).
-  Per-tick reasons are behind the `DROPSHOCK_TRACE_SPAWNER` define. Prefab and wiring
-  are correct (`GameSession.prefab:88`, hitboxes populated).
+- ~~Self-revive being refused (`_allowSelfRevive: 0`)~~ — **RESOLVED: it was not
+  being refused, it was unreachable.** The revive drive was gated on `CanAct`
+  (`!IsDead && !IsDowned`), so a downed player never reached `DriveRevive` and the
+  `_allowSelfRevive` check inside it never ran; setting the flag would have done
+  nothing. Now gated on `CanAct || (IsDowned && _allowSelfRevive)`. Worth noting the
+  shape: the bug produced the same observable behaviour as the feature working, so
+  the planned playtest would have confirmed it. Written into `ARCHITECTURE.md`.
+- **Also fixed alongside it:** `Heal` had no downed guard, so a medkit refilled the
+  bleed-out pool without clearing `IsDowned` — a stall, and a self-revive path that
+  bypassed the flag entirely. No callers existed yet, so nothing depended on it.
+- ~~The AI's 40m downed targeting penalty — unblocked, needs one session to confirm.~~
+  **RESOLVED: it was broken.** The penalty was added in *squared* metres against a
+  squared sight budget, so with the shipped `Enemy.prefab` values (`_sightRange: 25`,
+  `_downedTargetPenalty: 40`) it was `1600` against `625` — downed players were not
+  deprioritised but excluded at **every** distance, point blank included. A lone
+  downed player could never be finished off. `AcquireTarget` now gates visibility on
+  raw distance and applies the penalty only when ranking, in linear metres. Swept
+  0–25m the lone downed player is targeted at every distance (was 0/2501); across
+  200k randomised two-candidate cases a standing player never lost.
+  `penalty >= sightRange` is now the documented guarantee and `Spawned` warns below
+  it — the previous startup warning asserted the exact opposite and would have
+  flagged the correct configuration as the fault.
+- `EnemySpawner` logging still needs its session. On a server run expect
+  `[Spawner] active on '...'` once at startup, then `[Spawner] spawned '<prefab>' #1
+  ... alive=1/4` per spawn. If neither line appears the component is not running at
+  all; if the startup line appears alone, read the warning it prints
+  (`targetCount=0`, prefab missing, or radii overlapping). Per-tick reasons are
+  behind the `DROPSHOCK_TRACE_SPAWNER` define. Prefab and wiring are correct
+  (`GameSession.prefab:88`, hitboxes populated).
 
 ### 16. Art direction not chosen
 The project has zero materials, zero shaders, zero models, zero HUD. HDRP 17.5.
