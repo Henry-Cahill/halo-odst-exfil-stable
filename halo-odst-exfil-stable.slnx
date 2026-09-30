@@ -1,10 +1,10 @@
 ﻿<Solution>
+  <Project Path="Fusion.Unity.Editor.csproj" />
   <Project Path="Fusion.Unity.csproj" />
   <Project Path="Photon.Realtime.csproj" />
   <Project Path="Dropshock.Net.csproj" />
-  <Project Path="Fusion.Unity.Editor.csproj" />
   <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="Dropshock.Core.csproj" />
-  <Project Path="Unity.Fusion.CodeGen.csproj" />
   <Project Path="Assembly-CSharp.csproj" />
+  <Project Path="Unity.Fusion.CodeGen.csproj" />
 </Solution>

@@ -609,8 +609,6 @@ code distinguishes them.
 
 ### Stash and persistence
 
-### Stash and persistence
-
 **Decision: SQL Server, central.** Per-account state cannot live on individual
 game servers — a player must reach the same stash from any server. Relational and
 transactional is the right shape here: extraction and production collection are

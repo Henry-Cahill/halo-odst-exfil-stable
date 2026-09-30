@@ -137,3 +137,15 @@ InitTestScene*.unity*
 # Backend ones are hand-written and are the build definition -- without them a
 # fresh clone has source files and no way to compile them.
 !/Backend/**/*.csproj
+
+# --- Local-only artefacts ------------------------------------------------
+# Unity writes Assets/_Recovery/ when the editor dies with unsaved scenes. It is
+# one machine's crash residue, and committing it puts a half-saved scene next to
+# the real one in Scenes/ where it can be opened by mistake.
+/[Aa]ssets/_Recovery/
+/[Aa]ssets/_Recovery.meta
+
+# Rendered copy of ARCHITECTURE.md. The Markdown is the source of truth, and
+# *.pdf is an LFS pattern -- committing a regenerated binary on every doc edit
+# burns LFS quota for a file anyone can re-export.
+/ARCHITECTURE.pdf
